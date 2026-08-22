@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "944405370243",
+    "project_id": "profin-a4420",
+    "storage_bucket": "profin-a4420.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:944405370243:android:70e3635b5d7150e48ed2b6",
+        "android_client_info": {
+          "package_name": "com.example.expense_tracker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBg2Yu2SpxFLehEFfZFsEamyz4etCcrxCk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
