@@ -11,6 +11,7 @@ class RoomExpenseModel {
   final String splitType; // 'equal', 'percentage', 'exact', 'shares'
   final String? categoryId;
   final String? notes;
+  final String? receiptUrl;
   final DateTime createdAt;
   final CategoryModel? category;
 
@@ -25,6 +26,7 @@ class RoomExpenseModel {
     this.splitType = 'equal',
     this.categoryId,
     this.notes,
+    this.receiptUrl,
     DateTime? createdAt,
     this.category,
   }) : createdAt = createdAt ?? DateTime.now();
@@ -43,6 +45,7 @@ class RoomExpenseModel {
       splitType: map['split_type'] as String? ?? 'equal',
       categoryId: map['category_id']?.toString(),
       notes: map['notes'] as String?,
+      receiptUrl: map['receipt_url'] as String?,
       createdAt: map['created_at'] != null ? DateTime.tryParse(map['created_at'].toString()) ?? DateTime.now() : DateTime.now(),
       category: category ?? (map['categories'] != null ? CategoryModel.fromMap(map['categories'] as Map<String, dynamic>) : null),
     );
@@ -59,6 +62,7 @@ class RoomExpenseModel {
       'split_type': splitType,
       'category_id': categoryId,
       'notes': notes,
+      'receipt_url': receiptUrl,
     };
     if (id.isNotEmpty) {
       data['id'] = id;

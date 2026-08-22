@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/auth/services/secure_token_storage.dart';
@@ -578,6 +579,35 @@ class RoomRepository {
     return true;
   }
 
+  /// Uploads bill receipt image to Supabase Storage bucket 'receipts'.
+  /// Returns the public URL of the uploaded image.
+  Future<String> uploadReceiptImage({
+    required String roomId,
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    try {
+      final path = 'room_$roomId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+      
+      // Upload to Supabase bucket 'receipts'
+      await _client.storage.from('receipts').uploadBinary(
+        path,
+        bytes,
+        fileOptions: const FileOptions(
+          contentType: 'image/jpeg',
+          upsert: true,
+        ),
+      );
+
+      final publicUrl = _client.storage.from('receipts').getPublicUrl(path);
+      return publicUrl;
+    } catch (e) {
+      debugPrint('RoomRepository: Storage bucket upload warning ($e). Fallback to base64 encoding.');
+      final b64 = base64Encode(bytes);
+      return 'data:image/jpeg;base64,$b64';
+    }
+  }
+
   Future<void> addRoomExpense({
     required String roomId,
     required String paidByMemberName,
@@ -587,6 +617,7 @@ class RoomRepository {
     required List<CalculatedSplit> splits,
     String? categoryId,
     String? notes,
+    String? receiptUrl,
     String? linkedTransactionId,
     DateTime? date,
   }) async {
@@ -629,6 +660,7 @@ class RoomRepository {
       'split_type': splitType,
       'category_id': categoryId,
       'notes': notes,
+      'receipt_url': receiptUrl,
       'linked_transaction_id': linkedTransactionId,
       'created_at': DateTime.now().toIso8601String(),
     }).select().single();

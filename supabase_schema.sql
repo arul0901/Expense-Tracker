@@ -1260,6 +1260,25 @@ END;
 $$;
 
 -- =====================================================================
+-- SUPABASE STORAGE: BILL RECEIPTS BUCKET
+-- =====================================================================
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('receipts', 'receipts', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Policy: Allow authenticated users to upload receipts
+CREATE POLICY "Allow authenticated users to upload receipts"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (bucket_id = 'receipts');
+
+-- Policy: Allow public read access to bill receipts
+CREATE POLICY "Allow public read access to receipts"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'receipts');
+
+-- =====================================================================
 -- OPTIONAL: RELOAD POSTGREST SCHEMA CACHE
 -- =====================================================================
 NOTIFY pgrst, 'reload schema';

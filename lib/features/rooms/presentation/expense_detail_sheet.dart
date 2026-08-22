@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/app_colors.dart';
@@ -161,6 +162,47 @@ class ExpenseDetailSheet extends ConsumerWidget {
     }
   }
 
+  void _showFullImageDialog(BuildContext context, String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black87,
+        insetPadding: const EdgeInsets.all(12),
+        child: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: Center(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: imageUrl.startsWith('data:image')
+                      ? Image.memory(
+                          base64Decode(imageUrl.split(',').last),
+                          fit: BoxFit.contain,
+                        )
+                      : Image.network(
+                          imageUrl,
+                          fit: BoxFit.contain,
+                        ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -196,6 +238,52 @@ class ExpenseDetailSheet extends ConsumerWidget {
           Text(expense.description, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text('₹${totalRupees.toStringAsFixed(2)} • Paid by ${expenseDetails.payer.name}', style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.income, fontWeight: FontWeight.bold)),
+          if (expense.receiptUrl != null && expense.receiptUrl!.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            InkWell(
+              onTap: () => _showFullImageDialog(context, expense.receiptUrl!),
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 46,
+                        height: 46,
+                        child: expense.receiptUrl!.startsWith('data:image')
+                            ? Image.memory(
+                                base64Decode(expense.receiptUrl!.split(',').last),
+                                fit: BoxFit.cover,
+                              )
+                            : Image.network(
+                                expense.receiptUrl!,
+                                fit: BoxFit.cover,
+                              ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Receipt Photo Attached 📸', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.primary)),
+                          Text('Tap to view full screen & zoom bill', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.fullscreen, color: AppColors.primary),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           Text('MEMBER SHARES', style: theme.textTheme.labelSmall?.copyWith(letterSpacing: 1.1, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),

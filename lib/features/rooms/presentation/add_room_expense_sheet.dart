@@ -1,5 +1,7 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/haptic_feedback_util.dart';
@@ -30,6 +32,30 @@ class _AddRoomExpenseSheetState extends ConsumerState<AddRoomExpenseSheet> {
   String? _selectedCategoryId;
   String _splitType = 'equal';
   DateTime _selectedDate = DateTime.now();
+  XFile? _receiptImage;
+
+  Future<void> _pickReceiptImage(ImageSource source) async {
+    HapticFeedbackUtil.selectionClick();
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: source,
+        imageQuality: 80,
+        maxWidth: 1600,
+      );
+      if (picked != null) {
+        setState(() {
+          _receiptImage = picked;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to select receipt image: $e')),
+        );
+      }
+    }
+  }
 
   Future<void> _selectDate() async {
     HapticFeedbackUtil.selectionClick();
@@ -191,6 +217,16 @@ class _AddRoomExpenseSheetState extends ConsumerState<AddRoomExpenseSheet> {
     HapticFeedbackUtil.mediumImpact();
     final roomRepo = ref.read(roomRepositoryProvider);
 
+    String? receiptUrl;
+    if (_receiptImage != null) {
+      final bytes = await _receiptImage!.readAsBytes();
+      receiptUrl = await roomRepo.uploadReceiptImage(
+        roomId: widget.roomDetails.room.id,
+        bytes: bytes,
+        fileName: _receiptImage!.name,
+      );
+    }
+
     try {
       await roomRepo.addRoomExpense(
         roomId: widget.roomDetails.room.id,
@@ -200,6 +236,7 @@ class _AddRoomExpenseSheetState extends ConsumerState<AddRoomExpenseSheet> {
         splitType: _splitType,
         splits: splits,
         categoryId: _selectedCategoryId,
+        receiptUrl: receiptUrl,
         date: _selectedDate,
       );
 
@@ -360,6 +397,76 @@ class _AddRoomExpenseSheetState extends ConsumerState<AddRoomExpenseSheet> {
                       const Icon(Icons.edit_calendar_outlined, size: 18, color: AppColors.primary),
                     ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Bill / Receipt Attachment Tile
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: theme.dividerColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.receipt_long_outlined, size: 20, color: AppColors.primary),
+                            SizedBox(width: 8),
+                            Text('Bill / Receipt Photo', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ],
+                        ),
+                        if (_receiptImage != null)
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                            tooltip: 'Remove receipt',
+                            onPressed: () => setState(() => _receiptImage = null),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (_receiptImage != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: FutureBuilder<Uint8List>(
+                          future: _receiptImage!.readAsBytes(),
+                          builder: (context, snap) {
+                            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+                            return Image.memory(
+                              snap.data!,
+                              height: 120,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            );
+                          },
+                        ),
+                      )
+                    else
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _pickReceiptImage(ImageSource.camera),
+                              icon: const Icon(Icons.camera_alt_outlined, size: 18),
+                              label: const Text('Camera'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _pickReceiptImage(ImageSource.gallery),
+                              icon: const Icon(Icons.photo_library_outlined, size: 18),
+                              label: const Text('Gallery'),
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(height: 20),
