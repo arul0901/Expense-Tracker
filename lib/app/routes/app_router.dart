@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/auth/models/auth_state.dart';
 import '../../core/auth/providers/auth_provider.dart';
+import '../../features/ai_assistant/presentation/ai_assistant_screen.dart';
 import '../../features/analytics/presentation/analytics_screen.dart';
 import '../../features/dashboard/presentation/dashboard_screen.dart';
 import '../../features/events/presentation/events_screen.dart';
@@ -219,6 +220,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/search',
         name: 'search',
         builder: (context, state) => const GlobalSearchScreen(),
+      ),
+      GoRoute(
+        path: '/ai-assistant',
+        name: 'ai_assistant',
+        builder: (context, state) => const AiAssistantScreen(),
       ),
       GoRoute(
         path: '/settings',

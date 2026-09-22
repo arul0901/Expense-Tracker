@@ -20,7 +20,13 @@ class SearchRepository {
     if (trimmed.isEmpty) return [];
 
     final results = <SearchResultModel>[];
-    final activeUserId = _activeUserId;
+    String? activeUserId = _activeUserId;
+    if (activeUserId == null) {
+      try {
+        final res = await _client.auth.signInAnonymously();
+        activeUserId = res.user?.id;
+      } catch (_) {}
+    }
     if (activeUserId == null) return [];
 
     // Parse potential numeric amount from query (e.g. "500", "₹500", "500.00")
@@ -38,9 +44,10 @@ class SearchRepository {
       futures.add(_searchTransactions(trimmed, parsedPaise, monthNumber, activeUserId));
     }
 
-    // 2. Search Rooms
+    // 2. Search Rooms & Group Workspaces
     if (categoryFilter == SearchCategory.all || categoryFilter == SearchCategory.room) {
       futures.add(_searchRooms(trimmed, activeUserId));
+      futures.add(_searchRoomExpenses(trimmed, parsedPaise, monthNumber, activeUserId));
     }
 
     // 3. Search Events
@@ -342,6 +349,66 @@ class SearchRepository {
             deepLinkRoute: roomId != null ? '/rooms/$roomId' : '/to-do',
             icon: Icons.task_alt_outlined,
             iconColor: priority == 'Urgent' ? AppColors.expense : AppColors.primary,
+            metadata: map,
+          ));
+        }
+      }
+    } catch (_) {}
+    return list;
+  }
+
+  // 6. Room Expenses Search Engine
+  Future<List<SearchResultModel>> _searchRoomExpenses(
+    String query,
+    int? parsedPaise,
+    int? monthNumber,
+    String activeUserId,
+  ) async {
+    final list = <SearchResultModel>[];
+    try {
+      final rows = await _client.from('room_expenses').select('*, rooms(name), categories(name)');
+      for (final r in (rows as List)) {
+        final map = r as Map<String, dynamic>;
+        final description = (map['description'] as String?) ?? '';
+        final paidBy = (map['paid_by_member_name'] as String?) ?? '';
+        final notes = (map['notes'] as String?) ?? '';
+        final amountPaise = (map['amount_paise'] as num?)?.toInt() ?? 0;
+        final amountRupees = amountPaise / 100.0;
+        final dateStr = map['date']?.toString() ?? map['created_at']?.toString();
+        final date = dateStr != null ? DateTime.tryParse(dateStr) : null;
+        final roomMap = map['rooms'] as Map<String, dynamic>?;
+        final roomName = roomMap?['name']?.toString() ?? 'Group Room';
+        final catMap = map['categories'] as Map<String, dynamic>?;
+        final catName = catMap?['name']?.toString() ?? 'Group Expense';
+        final roomId = map['room_id']?.toString();
+
+        bool isMatch = description.toLowerCase().contains(query) ||
+            paidBy.toLowerCase().contains(query) ||
+            notes.toLowerCase().contains(query) ||
+            catName.toLowerCase().contains(query) ||
+            roomName.toLowerCase().contains(query);
+
+        if (parsedPaise != null && (amountPaise == parsedPaise || amountRupees.toStringAsFixed(0) == parsedPaise.toString())) {
+          isMatch = true;
+        }
+
+        if (monthNumber != null && date != null && date.month == monthNumber) {
+          isMatch = true;
+        }
+
+        if (isMatch) {
+          list.add(SearchResultModel(
+            id: map['id']?.toString() ?? '',
+            category: SearchCategory.room,
+            title: description,
+            subtitle: 'Paid by $paidBy in $roomName • ${dateFormatterShort(date)}',
+            amountRupees: amountRupees,
+            amountType: 'expense',
+            date: date,
+            contextInfo: 'Group Expense • $roomName',
+            deepLinkRoute: roomId != null ? '/rooms/$roomId' : '/transactions',
+            icon: Icons.groups_outlined,
+            iconColor: AppColors.primary,
             metadata: map,
           ));
         }

@@ -6,7 +6,9 @@ class SettlementModel {
   final String fromMemberName;
   final String toMemberName;
   final int amountPaise;
+  final String status; // 'pending', 'payment_initiated', 'payment_completed', 'settled'
   final DateTime settledAt;
+  final String? confirmedByUserId;
   final String? note;
   final DateTime? undoExpiresAt;
   final DateTime? undoneAt;
@@ -20,7 +22,9 @@ class SettlementModel {
     required this.fromMemberName,
     required this.toMemberName,
     required this.amountPaise,
+    this.status = 'settled',
     DateTime? settledAt,
+    this.confirmedByUserId,
     this.note,
     this.undoExpiresAt,
     this.undoneAt,
@@ -28,6 +32,8 @@ class SettlementModel {
   }) : settledAt = settledAt ?? DateTime.now();
 
   double get amountRupees => amountPaise / 100.0;
+
+  bool get isSettled => status == 'settled';
 
   bool get canUndo {
     if (undoneAt != null) return false;
@@ -46,7 +52,9 @@ class SettlementModel {
       fromMemberName: map['from_member_name'] as String? ?? 'Member',
       toMemberName: map['to_member_name'] as String? ?? 'Member',
       amountPaise: (map['amount_paise'] as num?)?.toInt() ?? 0,
+      status: map['status'] as String? ?? 'settled',
       settledAt: sAt,
+      confirmedByUserId: map['confirmed_by_user_id']?.toString(),
       note: map['note'] as String?,
       undoExpiresAt: map['undo_expires_at'] != null ? DateTime.tryParse(map['undo_expires_at'].toString()) : sAt.add(const Duration(minutes: 30)),
       undoneAt: map['undone_at'] != null ? DateTime.tryParse(map['undone_at'].toString()) : null,
@@ -62,7 +70,9 @@ class SettlementModel {
       'from_member_name': fromMemberName,
       'to_member_name': toMemberName,
       'amount_paise': amountPaise,
+      'status': status,
       'settled_at': settledAt.toIso8601String(),
+      'confirmed_by_user_id': confirmedByUserId,
       'note': note,
       'undo_expires_at': undoExpiresAt?.toIso8601String() ?? settledAt.add(const Duration(minutes: 30)).toIso8601String(),
       'undone_at': undoneAt?.toIso8601String(),

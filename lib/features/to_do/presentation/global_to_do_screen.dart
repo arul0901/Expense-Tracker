@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../app/theme/app_colors.dart';
+import '../../../core/models/room_task_model.dart';
 import '../../../core/utils/haptic_feedback_util.dart';
 import '../../../providers/app_providers.dart';
 import '../../../repositories/task_repository.dart';
+import '../../rooms/presentation/create_edit_task_sheet.dart';
 
 class GlobalToDoScreen extends ConsumerStatefulWidget {
   const GlobalToDoScreen({super.key});
@@ -29,6 +31,16 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
     super.dispose();
   }
 
+  void _openCreateTaskSheet() {
+    HapticFeedbackUtil.selectionClick();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const CreateEditTaskSheet(roomId: null),
+    );
+  }
+
   Future<void> _toggleTask(TaskWithMemberAndRoom taskItem) async {
     HapticFeedbackUtil.selectionClick();
     final repo = ref.read(taskRepositoryProvider);
@@ -50,6 +62,12 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
     }
   }
 
+  bool _shouldIncludeInActiveTab(RoomTaskModel task) {
+    if (!task.isCompleted) return true;
+    // Short term tasks disappear when completed; Long term tasks appear forever even though completed.
+    return task.taskType == 'Long Term';
+  }
+
   List<TaskWithMemberAndRoom> _filterTasks(List<TaskWithMemberAndRoom> tasks, int tabIndex) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -63,23 +81,23 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
     }
 
     switch (tabIndex) {
-      case 0:
+      case 0: // Today
         return filtered.where((t) {
-          if (t.task.isCompleted) return false;
+          if (!_shouldIncludeInActiveTab(t.task)) return false;
           if (t.task.dueDate == null) return false;
           final d = DateTime(t.task.dueDate!.year, t.task.dueDate!.month, t.task.dueDate!.day);
           return d.isAtSameMomentAs(today);
         }).toList();
 
-      case 1:
+      case 1: // Upcoming
         return filtered.where((t) {
-          if (t.task.isCompleted) return false;
+          if (!_shouldIncludeInActiveTab(t.task)) return false;
           if (t.task.dueDate == null) return true;
           final d = DateTime(t.task.dueDate!.year, t.task.dueDate!.month, t.task.dueDate!.day);
           return d.isAfter(today);
         }).toList();
 
-      case 2:
+      case 2: // Overdue
         return filtered.where((t) {
           if (t.task.isCompleted) return false;
           if (t.task.dueDate == null) return false;
@@ -87,12 +105,12 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
           return d.isBefore(today);
         }).toList();
 
-      case 3:
+      case 3: // Completed
         return filtered.where((t) => t.task.isCompleted).toList();
 
-      case 4:
+      case 4: // All Tasks
       default:
-        return filtered;
+        return filtered.where((t) => _shouldIncludeInActiveTab(t.task)).toList();
     }
   }
 
@@ -115,6 +133,13 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
             Tab(text: 'All Tasks'),
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openCreateTaskSheet,
+        icon: const Icon(Icons.add),
+        label: const Text('Add Task'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
       ),
       body: tasksAsync.when(
         data: (allTasks) {
@@ -171,7 +196,7 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
                     }
 
                     return ListView.builder(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
                       itemCount: items.length,
                       itemBuilder: (context, index) {
                         final item = items[index];
@@ -182,6 +207,8 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
                         if (task.priority == 'Urgent') priorityColor = AppColors.expense;
                         if (task.priority == 'High') priorityColor = Colors.orange;
 
+                        final isLongTerm = task.taskType == 'Long Term';
+
                         return Container(
                           margin: const EdgeInsets.only(bottom: 10),
                           decoration: BoxDecoration(
@@ -189,60 +216,142 @@ class _GlobalToDoScreenState extends ConsumerState<GlobalToDoScreen> with Single
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(color: theme.dividerColor),
                           ),
-                          child: ListTile(
-                            leading: Checkbox(
-                              value: isCompleted,
-                              onChanged: (_) => _toggleTask(item),
-                            ),
-                            title: Text(
-                              task.title,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                decoration: isCompleted ? TextDecoration.lineThrough : null,
-                                color: isCompleted ? Colors.grey : null,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: ListTile(
+                              leading: Checkbox(
+                                value: isCompleted,
+                                onChanged: (_) => _toggleTask(item),
                               ),
-                            ),
-                            subtitle: Row(
-                              children: [
-                                if (item.room != null) ...[
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Color(item.room!.colorAccent).withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(6),
+                              title: Text(
+                                task.title,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  decoration: isCompleted ? TextDecoration.lineThrough : null,
+                                  color: isCompleted ? Colors.grey : null,
+                                ),
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (task.description != null && task.description!.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2, bottom: 4),
+                                      child: Text(
+                                        task.description!,
+                                        style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
-                                    child: Text(
-                                      item.room!.name,
-                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(item.room!.colorAccent)),
-                                    ),
+                                  const SizedBox(height: 4),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 4,
+                                    children: [
+                                      // Term Type Badge
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: isLongTerm ? Colors.purple.withValues(alpha: 0.15) : Colors.blue.withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          isLongTerm ? '∞ Long Term' : '⚡ Short Term',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: isLongTerm ? Colors.purple : Colors.blue.shade700,
+                                          ),
+                                        ),
+                                      ),
+
+                                      // Category Badge
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.income.withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          task.category,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.income,
+                                          ),
+                                        ),
+                                      ),
+
+                                      // Room or Personal Badge
+                                      if (item.room != null)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Color(item.room!.colorAccent).withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            item.room!.name,
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(item.room!.colorAccent),
+                                            ),
+                                          ),
+                                        )
+                                      else
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey.withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: const Text(
+                                            'Personal',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ),
+
+                                      // Assigned Member
+                                      if (item.assignedMember != null)
+                                        Text(
+                                          'Assigned: ${item.assignedMember!.name}',
+                                          style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                                        ),
+
+                                      // Due Date & Time
+                                      if (task.dueDate != null)
+                                        Text(
+                                          'Due: ${DateFormat('d MMM, hh:mm a').format(task.dueDate!)}',
+                                          style: theme.textTheme.bodySmall?.copyWith(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppColors.income,
+                                          ),
+                                        ),
+                                    ],
                                   ),
-                                  const SizedBox(width: 6),
                                 ],
-                                if (item.assignedMember != null) ...[
-                                  Text('Assigned: ${item.assignedMember!.name}', style: theme.textTheme.bodySmall),
-                                  const SizedBox(width: 6),
-                                ],
-                                if (task.dueDate != null) ...[
-                                  Text(
-                                    'Due: ${DateFormat('d MMM').format(task.dueDate!)}',
-                                    style: theme.textTheme.bodySmall?.copyWith(color: AppColors.income),
-                                  ),
-                                ],
-                              ],
+                              ),
+                              trailing: task.priority == 'Urgent' || task.priority == 'High'
+                                  ? Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: priorityColor.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        task.priority.toUpperCase(),
+                                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: priorityColor),
+                                      ),
+                                    )
+                                  : null,
                             ),
-                            trailing: task.priority == 'Urgent' || task.priority == 'High'
-                                ? Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: priorityColor.withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      task.priority.toUpperCase(),
-                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: priorityColor),
-                                    ),
-                                  )
-                                : null,
                           ),
                         );
                       },

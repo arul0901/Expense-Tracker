@@ -5,11 +5,10 @@ import '../../../app/theme/app_colors.dart';
 import '../../../core/models/member_financial_summary.dart';
 import '../../../core/models/room_model.dart';
 import '../../../core/utils/haptic_feedback_util.dart';
-import '../../../core/utils/upi_payment_util.dart';
 import '../../../providers/app_providers.dart';
 import '../../../widgets/amount_text.dart';
 
-class MemberDetailSheet extends ConsumerWidget {
+class MemberDetailSheet extends ConsumerStatefulWidget {
   final MemberFinancialSummary summary;
   final RoomModel room;
   final VoidCallback? onUpdated;
@@ -21,15 +20,22 @@ class MemberDetailSheet extends ConsumerWidget {
     this.onUpdated,
   });
 
+  @override
+  ConsumerState<MemberDetailSheet> createState() => _MemberDetailSheetState();
+}
+
+class _MemberDetailSheetState extends ConsumerState<MemberDetailSheet> {
+  bool _isIncludingInExpenses = false;
+
   Future<void> _sendReminder(BuildContext context, WidgetRef ref) async {
     HapticFeedbackUtil.mediumImpact();
     final notif = ref.read(notificationServiceProvider);
-    final member = summary.member;
-    final rupees = summary.oweRupees.toStringAsFixed(0);
+    final member = widget.summary.member;
+    final rupees = widget.summary.oweRupees.toStringAsFixed(0);
     await notif.showNotification(
       id: member.name.hashCode,
       title: '🔔 Payment Reminder Sent',
-      body: 'Reminder sent to ${member.name} for ₹$rupees pending in ${room.name}.',
+      body: 'Reminder sent to ${member.name} for ₹$rupees pending in ${widget.room.name}.',
     );
 
     if (context.mounted) {
@@ -58,11 +64,11 @@ class MemberDetailSheet extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final member = summary.member;
-    final expensesAsync = ref.watch(roomExpensesProvider(room.id));
-    final statusColor = _getStatusColor(summary.status);
+    final member = widget.summary.member;
+    final expensesAsync = ref.watch(roomExpensesProvider(widget.room.id));
+    final statusColor = _getStatusColor(widget.summary.status);
 
     return Container(
       constraints: BoxConstraints(
@@ -150,7 +156,7 @@ class MemberDetailSheet extends ConsumerWidget {
                   border: Border.all(color: statusColor.withValues(alpha: 0.4)),
                 ),
                 child: Text(
-                  summary.statusLabel,
+                  widget.summary.statusLabel,
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
@@ -183,7 +189,7 @@ class MemberDetailSheet extends ConsumerWidget {
                           Text('TOTAL DUES', style: theme.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey)),
                           const SizedBox(height: 4),
                           AmountText(
-                            amount: summary.totalDuesRupees,
+                            amount: widget.summary.totalDuesRupees,
                             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                         ],
@@ -199,7 +205,7 @@ class MemberDetailSheet extends ConsumerWidget {
                           Text('TOTAL PAID', style: theme.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.grey)),
                           const SizedBox(height: 4),
                           AmountText(
-                            amount: summary.totalPaidRupees,
+                            amount: widget.summary.totalPaidRupees,
                             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.income),
                           ),
                         ],
@@ -216,50 +222,33 @@ class MemberDetailSheet extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          summary.isOwed
+                          widget.summary.isOwed
                               ? 'Group Owes Member'
-                              : summary.isOwes
+                              : widget.summary.isOwes
                                   ? 'Member Owes Group'
                                   : 'Settled',
                           style: theme.textTheme.labelSmall?.copyWith(
                             fontWeight: FontWeight.bold,
-                            color: summary.isOwes ? AppColors.expense : (summary.isOwed ? AppColors.income : Colors.grey),
+                            color: widget.summary.isOwes ? AppColors.expense : (widget.summary.isOwed ? AppColors.income : Colors.grey),
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          summary.isSettled
+                          widget.summary.isSettled
                               ? 'Fully Settled (₹0.00)'
-                              : summary.isOwed
-                                  ? '+₹${summary.receivableRupees.toStringAsFixed(2)}'
-                                  : '-₹${summary.oweRupees.toStringAsFixed(2)}',
+                              : widget.summary.isOwed
+                                  ? '+₹${widget.summary.receivableRupees.toStringAsFixed(2)}'
+                                  : '-₹${widget.summary.oweRupees.toStringAsFixed(2)}',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
-                            color: summary.isSettled ? Colors.grey : (summary.isOwed ? AppColors.income : AppColors.expense),
+                            color: widget.summary.isSettled ? Colors.grey : (widget.summary.isOwed ? AppColors.income : AppColors.expense),
                           ),
                         ),
                       ],
                     ),
-                    if (summary.isOwed && !summary.member.isCurrentUser)
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          UpiPaymentUtil.launchUpiPaymentWithPrompt(
-                            context,
-                            receiverName: member.name,
-                            amountRupees: summary.netBalancePaise.abs() / 100.0,
-                            note: 'Settlement for ${room.name}',
-                          );
-                        },
-                        icon: const Icon(Icons.account_balance_wallet_outlined, size: 16),
-                        label: const Text('Pay UPI'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                        ),
-                      ),
-                    if (summary.isOwes && !summary.member.isCurrentUser)
+
+                    if (widget.summary.isOwes && !widget.summary.member.isCurrentUser)
                       ElevatedButton.icon(
                         onPressed: () {
                           _sendReminder(context, ref);
@@ -346,6 +335,62 @@ class MemberDetailSheet extends ConsumerWidget {
           ),
 
           const SizedBox(height: 12),
+          expensesAsync.when(
+            data: (expensesList) {
+              final currentUserPaidExpenses = expensesList.where((e) => e.payer.isCurrentUser).toList();
+              final hasCurrentUserPaid = currentUserPaidExpenses.isNotEmpty;
+              final currentUserName = hasCurrentUserPaid ? currentUserPaidExpenses.first.payer.name : '';
+
+              if (hasCurrentUserPaid && !member.isCurrentUser) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: ElevatedButton.icon(
+                    onPressed: _isIncludingInExpenses
+                        ? null
+                        : () async {
+                            setState(() => _isIncludingInExpenses = true);
+                            try {
+                              await ref.read(roomRepositoryProvider).addMemberToPastExpenses(
+                                    roomId: widget.room.id,
+                                    payerMemberName: currentUserName,
+                                    newMemberName: member.name,
+                                  );
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('✓ Member added to your past expenses'),
+                                    backgroundColor: AppColors.income,
+                                  ),
+                                );
+                                widget.onUpdated?.call();
+                                Navigator.pop(context);
+                              }
+                            } catch (e) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.expense),
+                                );
+                              }
+                            } finally {
+                              if (mounted) setState(() => _isIncludingInExpenses = false);
+                            }
+                          },
+                    icon: _isIncludingInExpenses
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.group_add_outlined),
+                    label: Text(_isIncludingInExpenses ? 'Including...' : 'Include in my past expenses'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
+            loading: () => const SizedBox.shrink(),
+            error: (_, __) => const SizedBox.shrink(),
+          ),
           OutlinedButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close Summary'),

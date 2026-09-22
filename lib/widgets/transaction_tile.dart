@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../core/models/category_model.dart';
 import '../core/models/transaction_model.dart';
 import '../core/utils/date_formatter.dart';
+import '../app/theme/app_colors.dart';
 import 'amount_text.dart';
+import 'app_card.dart';
 import 'category_icon_widget.dart';
 
 class TransactionTile extends StatelessWidget {
@@ -24,84 +26,80 @@ class TransactionTile extends StatelessWidget {
     final theme = Theme.of(context);
     final isIncome = transaction.type == 'income';
 
-    return InkWell(
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 4.0),
-        child: Row(
-          children: [
-            CategoryIconWidget(
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: isIncome ? AppColors.incomeLight : AppColors.primaryInk,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: CategoryIconWidget(
               iconName: category.icon,
-              colorValue: category.color,
-              size: 20,
+              colorValue: Colors.white.value, // Force white icon inside solid block
+              size: 24,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    category.name,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      if (transaction.note != null && transaction.note!.isNotEmpty) ...[
-                        Expanded(
-                          child: Text(
-                            transaction.note!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ] else ...[
-                        Text(
-                          DateFormatter.formatTime(transaction.date),
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          transaction.paymentMethod.toUpperCase(),
-                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                AmountText(
-                  amount: transaction.amountRupees,
-                  isIncome: isIncome,
-                  showSign: true,
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                Text(
+                  transaction.note != null && transaction.note!.isNotEmpty
+                      ? transaction.note!
+                      : category.name,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  category.name,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondaryLight,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
-            if (onDelete != null)
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
-                onPressed: onDelete,
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              AmountText(
+                amount: transaction.amountRupees,
+                isIncome: isIncome,
+                showSign: true,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
               ),
-          ],
-        ),
+              const SizedBox(height: 4),
+              Text(
+                'Today, ${DateFormatter.formatTime(transaction.date)}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 10,
+                  color: AppColors.textSecondaryLight,
+                ),
+              ),
+            ],
+          ),
+          if (onDelete != null)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
+              onPressed: onDelete,
+            ),
+        ],
       ),
     );
   }

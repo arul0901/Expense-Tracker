@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthUser;
+import '../../config/app_config.dart';
 import '../models/auth_user_model.dart';
 import 'secure_token_storage.dart';
 
@@ -49,6 +50,8 @@ abstract class BaseAuthService {
     String? photoUrl,
   });
 
+
+
   Future<void> deleteAccount({
     required AuthUser user,
     required String currentPassword,
@@ -81,7 +84,8 @@ class ProductionAuthService implements BaseAuthService {
   bool get _isSupabaseConfigured {
     try {
       Supabase.instance.client;
-      return true;
+      final url = AppConfig.supabaseUrl;
+      return url.isNotEmpty && (url.startsWith('http://') || url.startsWith('https://'));
     } catch (_) {
       return false;
     }
@@ -128,7 +132,11 @@ class ProductionAuthService implements BaseAuthService {
       } on AuthException catch (e) {
         throw AuthException(e.message, code: e.code);
       } catch (e) {
-        throw AuthException(e.toString().replaceAll('AuthException: ', ''));
+        final errStr = e.toString();
+        if (errStr.contains('Invalid argument') || errStr.contains('No host specified') || errStr.contains('SocketException')) {
+          throw AuthException('Unable to reach server. Please check your network connection.');
+        }
+        throw AuthException(errStr.replaceAll('AuthException: ', ''));
       }
     }
 
@@ -205,7 +213,11 @@ class ProductionAuthService implements BaseAuthService {
       } on AuthException catch (e) {
         throw AuthException(e.message, code: e.code);
       } catch (e) {
-        throw AuthException(e.toString().replaceAll('AuthException: ', ''));
+        final errStr = e.toString();
+        if (errStr.contains('Invalid argument') || errStr.contains('No host specified') || errStr.contains('SocketException')) {
+          throw AuthException('Unable to reach server. Please check your network connection.');
+        }
+        throw AuthException(errStr.replaceAll('AuthException: ', ''));
       }
     }
 
@@ -337,6 +349,8 @@ class ProductionAuthService implements BaseAuthService {
     await _tokenStorage.saveSession(accessToken: token, user: updated);
     return updated;
   }
+
+
 
   @override
   Future<void> deleteAccount({

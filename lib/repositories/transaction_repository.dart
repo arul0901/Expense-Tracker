@@ -21,30 +21,53 @@ class TransactionRepository {
 
   TransactionRepository(this._client);
 
+  Future<Map<String, CategoryModel>> _getCategoryMap() async {
+    final catMap = <String, CategoryModel>{};
+    for (final cat in CategoryRepository.defaultCategories) {
+      catMap[cat.id] = cat;
+    }
+    try {
+      final rows = await _client.from('categories').select();
+      for (final row in (rows as List)) {
+        final map = row as Map<String, dynamic>;
+        final cat = CategoryModel.fromMap(map);
+        catMap[cat.id] = cat;
+      }
+    } catch (_) {}
+    return catMap;
+  }
+
   Future<List<TransactionWithCategory>> getAllTransactionsWithCategory() async {
-    final userId = _client.auth.currentUser?.id;
+    User? currentUser = _client.auth.currentUser;
+    if (currentUser == null) {
+      try {
+        final res = await _client.auth.signInAnonymously();
+        currentUser = res.user;
+      } catch (_) {}
+    }
+    final userId = currentUser?.id;
     if (userId == null) return [];
 
     try {
+      final catMap = await _getCategoryMap();
       final rows = await _client
           .from('transactions')
           .select()
+          .eq('user_id', userId)
           .order('date', ascending: false);
 
       final list = <TransactionWithCategory>[];
       for (final row in (rows as List)) {
         final map = row as Map<String, dynamic>;
         final categoryId = map['category_id']?.toString();
-        CategoryModel? cat;
-        if (categoryId != null) {
-          try {
-            final catRow = await _client.from('categories').select().eq('id', categoryId).maybeSingle();
-            if (catRow != null) {
-              cat = CategoryModel.fromMap(catRow);
-            }
-          } catch (_) {}
-        }
-        cat ??= CategoryModel(id: 'default', name: 'General', icon: 'category', color: 0xFF0D9488, type: map['type'] ?? 'expense');
+        CategoryModel cat = (categoryId != null ? catMap[categoryId] : null) ??
+            CategoryModel(
+              id: categoryId ?? 'default',
+              name: 'General',
+              icon: 'category',
+              color: 0xFF0D9488,
+              type: map['type'] ?? 'expense',
+            );
         final tx = TransactionModel.fromMap(map, category: cat);
         list.add(TransactionWithCategory(transaction: tx, category: cat));
       }
@@ -67,32 +90,34 @@ class TransactionRepository {
         return _client
             .from('transactions')
             .stream(primaryKey: ['id'])
+            .eq('user_id', userId)
             .order('date', ascending: false)
             .asyncMap((rows) async {
+              final catMap = await _getCategoryMap();
               final list = <TransactionWithCategory>[];
               for (final row in rows) {
                 final categoryId = row['category_id']?.toString();
-                CategoryModel? cat;
-                if (categoryId != null) {
-                  try {
-                    final catRow = await _client.from('categories').select().eq('id', categoryId).maybeSingle();
-                    if (catRow != null) {
-                      cat = CategoryModel.fromMap(catRow);
-                    }
-                  } catch (_) {}
-                }
-                cat ??= CategoryModel(id: 'default', name: 'General', icon: 'category', color: 0xFF0D9488, type: row['type'] ?? 'expense');
+                CategoryModel cat = (categoryId != null ? catMap[categoryId] : null) ??
+                    CategoryModel(
+                      id: categoryId ?? 'default',
+                      name: 'General',
+                      icon: 'category',
+                      color: 0xFF0D9488,
+                      type: row['type'] ?? 'expense',
+                    );
                 final tx = TransactionModel.fromMap(row, category: cat);
                 list.add(TransactionWithCategory(transaction: tx, category: cat));
               }
               return list;
             }).handleError((error, stackTrace) async* {
+              debugPrint('TransactionRepository: Realtime error: $error');
               if (error.toString().contains('InvalidJWTToken') || error.toString().contains('expired')) {
                 try {
                   await _client.auth.refreshSession();
                 } catch (_) {}
               }
-              yield <TransactionWithCategory>[];
+              final fallback = await getAllTransactionsWithCategory();
+              yield fallback;
             });
       },
     );

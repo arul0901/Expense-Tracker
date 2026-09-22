@@ -206,7 +206,13 @@ class _AddEditTransactionSheetState extends ConsumerState<AddEditTransactionShee
     final repo = ref.read(transactionRepositoryProvider);
 
     try {
-      final currentUser = ref.read(supabaseClientProvider).auth.currentUser;
+      var currentUser = ref.read(supabaseClientProvider).auth.currentUser;
+      if (currentUser == null) {
+        try {
+          final res = await ref.read(supabaseClientProvider).auth.signInAnonymously();
+          currentUser = res.user;
+        } catch (_) {}
+      }
       if (currentUser == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

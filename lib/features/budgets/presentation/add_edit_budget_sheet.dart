@@ -137,6 +137,7 @@ class _AddEditBudgetSheetState extends ConsumerState<AddEditBudgetSheet> {
             categoriesAsync.when(
               data: (categories) => DropdownButtonFormField<String?>(
                 initialValue: _selectedCategoryId,
+                isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: 'Scope / Category',
                   prefixIcon: Icon(Icons.category_outlined),

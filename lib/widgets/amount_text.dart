@@ -38,7 +38,7 @@ class AmountText extends StatelessWidget {
     } else if (isIncome == false) {
       color = AppColors.expense;
     } else {
-      color = style?.color ?? Theme.of(context).textTheme.titleMedium?.color ?? AppColors.textPrimaryLight;
+      color = style?.color ?? Theme.of(context).textTheme.titleMedium?.color ?? Theme.of(context).colorScheme.onSurface;
     }
 
     return Text(

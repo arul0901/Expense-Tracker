@@ -8,7 +8,7 @@ import '../../../core/models/room_member_model.dart';
 import '../../../core/utils/haptic_feedback_util.dart';
 import '../../../core/utils/room_report_generator.dart';
 import '../../../core/utils/settlement_engine.dart';
-import '../../../core/utils/upi_payment_util.dart';
+
 import '../../../providers/app_providers.dart';
 import '../../../repositories/room_repository.dart';
 import '../../../repositories/task_repository.dart';
@@ -189,17 +189,27 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
     );
   }
 
+
+
   Future<void> _recordSettlement(SettlementSuggestion suggestion) async {
     if (_roomDetails == null) return;
     final currentUser = ref.read(supabaseClientProvider).auth.currentUser;
-    final isPayerOrReceiverOrOwner = _roomDetails!.members.any((m) =>
-        (m.isCurrentUser || m.userId == currentUser?.id) &&
-        (m.name == suggestion.fromMemberName || m.name == suggestion.toMemberName || m.role == 'Owner'));
 
-    if (!isPayerOrReceiverOrOwner) {
+    final fromMember = _roomDetails!.members.firstWhere(
+      (m) => m.name.trim().toLowerCase() == suggestion.fromMemberName.trim().toLowerCase(),
+      orElse: () => _roomDetails!.members.first,
+    );
+    final toMember = _roomDetails!.members.firstWhere(
+      (m) => m.name.trim().toLowerCase() == suggestion.toMemberName.trim().toLowerCase(),
+      orElse: () => _roomDetails!.members.first,
+    );
+
+    final isReceiver = toMember.isCurrentUser || (currentUser != null && toMember.userId == currentUser.id);
+
+    if (!isReceiver) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Only ${suggestion.fromMemberName}, ${suggestion.toMemberName}, or the room owner can mark this settlement as settled.'),
+          content: Text('Only the receiver (${toMember.name}) can mark this settlement as settled.'),
           backgroundColor: AppColors.warning,
           behavior: SnackBarBehavior.floating,
         ),
@@ -207,21 +217,19 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
       return;
     }
 
-    final fromMember = _roomDetails!.members.firstWhere((m) => m.name == suggestion.fromMemberName, orElse: () => _roomDetails!.members.first);
-    final toMember = _roomDetails!.members.firstWhere((m) => m.name == suggestion.toMemberName, orElse: () => _roomDetails!.members.first);
     final amountRupees = suggestion.amountPaise / 100.0;
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Record Settlement?'),
-        content: Text('Mark "${fromMember.name}" paying ₹${amountRupees.toStringAsFixed(2)} to "${toMember.name}" as Settled?'),
+        title: const Text('Confirm Dues Received?'),
+        content: Text('Confirm that you have received ₹${amountRupees.toStringAsFixed(2)} from "${fromMember.name}"?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.income),
-            child: const Text('Confirm Settlement'),
+            child: const Text('Confirm Settled'),
           ),
         ],
       ),
@@ -235,14 +243,25 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
           roomId: widget.roomId,
           fromMemberName: fromMember.name,
           toMemberName: toMember.name,
+          fromUserId: fromMember.userId,
+          toUserId: toMember.userId,
           amountPaise: suggestion.amountPaise,
-          note: 'Settled via ProFin Room Workspace',
+          status: 'settled',
+          note: 'Confirmed settled by receiver (${toMember.name})',
         );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✓ Marked settlement as fully settled!'),
+              backgroundColor: AppColors.income,
+            ),
+          );
+        }
         await _loadRoomDetails();
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('You\'re offline. Reconnect to continue. ($e)')),
+            SnackBar(content: Text('Unable to confirm settlement: $e')),
           );
         }
       }
@@ -278,6 +297,72 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
       await repo.removeRoomMember(widget.roomId, member.id);
       await _loadRoomDetails();
     }
+  }
+
+  bool _isIncludingBanner = false;
+
+  Widget _buildNewMemberBanner(RoomMemberModel recentMember, String currentUserName) {
+    final theme = Theme.of(context);
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.person_add_alt_1, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${recentMember.name} recently joined!', style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text('Add them to your past expenses?', style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            onPressed: _isIncludingBanner
+                ? null
+                : () async {
+                    setState(() => _isIncludingBanner = true);
+                    try {
+                      await ref.read(roomRepositoryProvider).addMemberToPastExpenses(
+                            roomId: widget.roomId,
+                            payerMemberName: currentUserName,
+                            newMemberName: recentMember.name,
+                          );
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('✓ Member added to your past expenses'),
+                            backgroundColor: AppColors.income,
+                          ),
+                        );
+                        _loadRoomDetails();
+                        ref.invalidate(roomExpensesProvider(widget.roomId));
+                        ref.invalidate(roomMemberFinancialsProvider(widget.roomId));
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error: $e'), backgroundColor: AppColors.expense),
+                        );
+                      }
+                    } finally {
+                      if (mounted) setState(() => _isIncludingBanner = false);
+                    }
+                  },
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
+            child: _isIncludingBanner ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Include'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _handleDeleteRoom() async {
@@ -612,9 +697,33 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
+      body: Builder(builder: (context) {
+        final expList = expensesAsync.value ?? [];
+        final currentUserPaidExpenses = expList.where((e) => e.payer.isCurrentUser).toList();
+        final hasCurrentUserPaid = currentUserPaidExpenses.isNotEmpty;
+        final currentUserName = hasCurrentUserPaid ? currentUserPaidExpenses.first.payer.name : '';
+
+        List<RoomMemberModel> recentMembers = [];
+        if (hasCurrentUserPaid) {
+          recentMembers = activeMembers.where((m) {
+            if (m.isCurrentUser) return false;
+            final joinedRecently = DateTime.now().difference(m.joinedAt).inHours < 24;
+            if (!joinedRecently) return false;
+            
+            bool isMissingFromAny = currentUserPaidExpenses.any((exp) {
+              return !exp.splits.any((s) => s.memberName == m.name);
+            });
+            return isMissingFromAny;
+          }).toList();
+        }
+
+        return Column(
+          children: [
+            if (recentMembers.isNotEmpty) _buildNewMemberBanner(recentMembers.first, currentUserName),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
           // 1. Expenses Tab
           expensesAsync.when(
             data: (expensesList) {
@@ -759,8 +868,6 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
                           subtitleText = '${s.fromMemberName} owes ${s.toMemberName}';
                         }
 
-                        final showUpiButton = isCurrentOwer;
-
                         return Card(
                           child: ListTile(
                             leading: const Icon(Icons.swap_horiz_outlined, color: AppColors.income),
@@ -770,25 +877,17 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 AmountText(amount: s.amountPaise / 100.0, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                const SizedBox(width: 4),
-                                if (showUpiButton)
-                                  IconButton(
-                                    icon: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.primary),
-                                    tooltip: 'Pay ${s.toMemberName} via UPI App (GPay/PhonePe/Paytm)',
-                                    onPressed: () {
-                                      UpiPaymentUtil.launchUpiPaymentWithPrompt(
-                                        context,
-                                        receiverName: s.toMemberName,
-                                        amountRupees: s.amountPaise / 100.0,
-                                        note: 'Settlement for ${_roomDetails?.room.name ?? "Room"}',
-                                        onPaymentLaunched: () => _recordSettlement(s),
-                                      );
-                                    },
+                                const SizedBox(width: 8),
+                                if (isCurrentReceiver)
+                                  ElevatedButton.icon(
+                                    onPressed: () => _recordSettlement(s),
+                                    icon: const Icon(Icons.check_circle_outline, size: 16),
+                                    label: const Text('Mark Settled'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.income,
+                                      foregroundColor: Colors.white,
+                                    ),
                                   ),
-                                ElevatedButton(
-                                  onPressed: () => _recordSettlement(s),
-                                  child: const Text('Mark Settled'),
-                                ),
                               ],
                             ),
                           ),
@@ -883,6 +982,11 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
           // 3. Tasks Tab
           tasksAsync.when(
             data: (tasks) {
+              final activeRoomTasks = tasks.where((t) {
+                if (!t.task.isCompleted) return true;
+                return t.task.taskType == 'Long Term';
+              }).toList();
+
               return ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
@@ -894,18 +998,103 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
                     ],
                   ),
                   const SizedBox(height: 12),
-                  if (tasks.isEmpty)
-                    const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No tasks created for this room.')))
+                  if (activeRoomTasks.isEmpty)
+                    const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No active tasks created for this room.')))
                   else
-                    ...tasks.map((t) {
+                    ...activeRoomTasks.map((t) {
                       final task = t.task;
                       final isComp = task.isCompleted;
+                      final isLongTerm = task.taskType == 'Long Term';
+
                       return Card(
-                        child: CheckboxListTile(
-                          value: isComp,
-                          onChanged: (_) => _toggleTask(t),
-                          title: Text(task.title, style: TextStyle(decoration: isComp ? TextDecoration.lineThrough : null, fontWeight: FontWeight.bold)),
-                          subtitle: Text(t.assignedMember != null ? 'Assigned: ${t.assignedMember!.name}' : 'Unassigned'),
+                        margin: const EdgeInsets.only(bottom: 10),
+                        elevation: 1,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: CheckboxListTile(
+                            value: isComp,
+                            onChanged: (_) => _toggleTask(t),
+                            title: Text(
+                              task.title,
+                              style: TextStyle(
+                                decoration: isComp ? TextDecoration.lineThrough : null,
+                                color: isComp ? Colors.grey : null,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (task.description != null && task.description!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2, bottom: 4),
+                                    child: Text(
+                                      task.description!,
+                                      style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+                                    ),
+                                  ),
+                                const SizedBox(height: 4),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: [
+                                    // Term Type Badge
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: isLongTerm ? Colors.purple.withValues(alpha: 0.15) : Colors.blue.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        isLongTerm ? '∞ Long Term' : '⚡ Short Term',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: isLongTerm ? Colors.purple : Colors.blue.shade700,
+                                        ),
+                                      ),
+                                    ),
+
+                                    // Category Badge
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.income.withValues(alpha: 0.15),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        task.category,
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.income,
+                                        ),
+                                      ),
+                                    ),
+
+                                    // Assigned Member
+                                    if (t.assignedMember != null)
+                                      Text(
+                                        'Assigned: ${t.assignedMember!.name}',
+                                        style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                                      ),
+
+                                    // Due Date & Time
+                                    if (task.dueDate != null)
+                                      Text(
+                                        'Due: ${DateFormat('d MMM, hh:mm a').format(task.dueDate!)}',
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppColors.income,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       );
                     }),
@@ -1152,26 +1341,34 @@ class _RoomWorkspaceScreenState extends ConsumerState<RoomWorkspaceScreen> with 
           activitiesAsync.when(
             data: (activities) {
               if (activities.isEmpty) {
-                return const Center(child: Text('No room activity recorded yet.'));
+                return const Center(child: Text('No room activity recorded yet.', style: TextStyle(color: Colors.grey)));
               }
-              return ListView.builder(
+              return ListView.separated(
                 padding: const EdgeInsets.all(16),
                 itemCount: activities.length,
+                separatorBuilder: (_, __) => const Divider(),
                 itemBuilder: (context, index) {
                   final act = activities[index];
                   return ListTile(
-                    leading: const Icon(Icons.history_outlined, color: AppColors.primary),
+                    leading: CircleAvatar(
+                      backgroundColor: accentColor.withValues(alpha: 0.1),
+                      child: Icon(Icons.history, color: accentColor, size: 18),
+                    ),
                     title: Text(act.details),
-                    subtitle: Text(DateFormat('dd MMM yyyy, hh:mm a').format(act.createdAt)),
+                    subtitle: Text(DateFormat('dd MMM • hh:mm a').format(act.createdAt)),
                   );
                 },
               );
             },
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, s) => Center(child: Text('Error loading activities: $e')),
+            error: (e, s) => Center(child: Text('Error loading activity: $e')),
           ),
         ],
       ),
+    ),
+  ],
+);
+      }),
     );
   }
 }

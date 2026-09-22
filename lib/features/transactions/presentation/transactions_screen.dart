@@ -24,7 +24,8 @@ class TransactionsScreen extends ConsumerStatefulWidget {
   ConsumerState<TransactionsScreen> createState() => _TransactionsScreenState();
 }
 
-class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with SingleTickerProviderStateMixin {
+class _TransactionsScreenState extends ConsumerState<TransactionsScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   TransactionType? _filterType;
 
@@ -57,7 +58,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
     HapticFeedbackUtil.selectionClick();
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) => FilterBottomSheet(
         initialType: _filterType,
         onApply: (type) {
@@ -72,9 +75,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Transaction?'),
-        content: const Text('Are you sure you want to delete this transaction?'),
+        content: const Text(
+          'Are you sure you want to delete this transaction?',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: AppColors.expense),
@@ -86,7 +94,9 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
 
     if (confirm == true) {
       HapticFeedbackUtil.mediumImpact();
-      await ref.read(transactionRepositoryProvider).deleteTransaction(transaction.id);
+      await ref
+          .read(transactionRepositoryProvider)
+          .deleteTransaction(transaction.id);
     }
   }
 
@@ -105,7 +115,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
             onPressed: () => context.push('/search'),
           ),
           IconButton(
-            icon: Icon(Icons.filter_list, color: _filterType != null ? AppColors.primary : null),
+            icon: Icon(
+              Icons.filter_list,
+              color: _filterType != null ? AppColors.primary : null,
+            ),
             onPressed: _openFilterBottomSheet,
           ),
           IconButton(
@@ -126,7 +139,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
       body: transactionsAsync.when(
         data: (allList) {
           final filtered = allList.where((item) {
-            return _filterType == null || item.transaction.type == _filterType!.name;
+            return _filterType == null ||
+                item.transaction.type == _filterType!.name;
           }).toList();
 
           if (filtered.isEmpty) {
@@ -148,7 +162,8 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
           );
         },
         loading: () => SkeletonLoader.tile(count: 5),
-        error: (err, stack) => Center(child: Text('Error loading transactions: $err')),
+        error: (err, stack) =>
+            Center(child: Text('Error loading transactions: $err')),
       ),
     );
   }
@@ -162,29 +177,39 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
 
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
       itemCount: grouped.keys.length,
       itemBuilder: (context, index) {
         final dateKey = grouped.keys.elementAt(index);
         final list = grouped[dateKey]!;
         final dayExpensePaise = list
-            .where((t) => t.transaction.type == 'expense')
+            .where((t) => _filterType == null ? t.transaction.type == 'expense' : true)
             .fold(0, (sum, t) => sum + t.transaction.amountPaise);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              padding: const EdgeInsets.symmetric(
+                vertical: 8.0,
+                horizontal: 4.0,
+              ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
                     dateKey.toUpperCase(),
-                    style: theme.textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold, letterSpacing: 1.1),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.1,
+                    ),
                   ),
                   Text(
-                    'Spent: ₹${(dayExpensePaise / 100.0).toStringAsFixed(2)}',
-                    style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+                    '${_filterType?.name == 'income' ? 'Received' : 'Spent'}: ₹${(dayExpensePaise / 100.0).toStringAsFixed(2)}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
@@ -204,23 +229,38 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
     );
   }
 
-  Widget _buildWeeklyView(List<TransactionWithCategory> items, ThemeData theme) {
+  Widget _buildWeeklyView(
+    List<TransactionWithCategory> items,
+    ThemeData theme,
+  ) {
     final weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final Map<int, double> dayExpenses = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
+    final Map<int, double> dayExpenses = {
+      1: 0,
+      2: 0,
+      3: 0,
+      4: 0,
+      5: 0,
+      6: 0,
+      7: 0,
+    };
 
     final now = DateTime.now();
-    final startOfWeek = now.subtract(Duration(days: now.weekday - 1));
+    final startOfWeek = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
 
     for (final item in items) {
-      if (item.transaction.type == 'expense') {
+      if (_filterType == null ? item.transaction.type == 'expense' : true) {
         final d = item.transaction.date;
         if (d.isAfter(startOfWeek.subtract(const Duration(days: 1)))) {
-          dayExpenses[d.weekday] = (dayExpenses[d.weekday] ?? 0) + item.transaction.amountRupees;
+          dayExpenses[d.weekday] =
+              (dayExpenses[d.weekday] ?? 0) + item.transaction.amountRupees;
         }
       }
     }
 
-    final maxVal = dayExpenses.values.fold(1.0, (max, val) => val > max ? val : max);
+    final maxVal = dayExpenses.values.fold(
+      1.0,
+      (max, val) => val > max ? val : max,
+    );
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -231,7 +271,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('THIS WEEK\'S SPENDING TREND', style: theme.textTheme.labelSmall?.copyWith(letterSpacing: 1.1)),
+                Text(
+                  'THIS WEEK\'S SPENDING TREND',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    letterSpacing: 1.1,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -248,12 +293,20 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
                           width: 24,
                           height: 100 * ratio,
                           decoration: BoxDecoration(
-                            color: spent > 0 ? AppColors.primary : theme.colorScheme.surfaceContainerHighest,
+                            color: spent > 0
+                                ? AppColors.primary
+                                : theme.colorScheme.surfaceContainerHighest,
                             borderRadius: BorderRadius.circular(6),
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(weekdays[index], style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        Text(
+                          weekdays[index],
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     );
                   }),
@@ -262,16 +315,30 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
             ),
           ),
           const SizedBox(height: 16),
-          _buildDailyView(items, theme),
+          _buildDailyView(
+            items.where((item) {
+              final d = item.transaction.date;
+              return d.isAfter(startOfWeek.subtract(const Duration(days: 1)));
+            }).toList(),
+            theme,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildMonthlyView(List<TransactionWithCategory> items, ThemeData theme) {
+  Widget _buildMonthlyView(
+    List<TransactionWithCategory> items,
+    ThemeData theme,
+  ) {
     final monthName = DateFormatter.formatMonthYear(_selectedMonth);
     final monthExpensePaise = items
-        .where((t) => t.transaction.type == 'expense' && t.transaction.date.month == _selectedMonth.month && t.transaction.date.year == _selectedMonth.year)
+        .where(
+          (t) =>
+              (_filterType == null ? t.transaction.type == 'expense' : true) &&
+              t.transaction.date.month == _selectedMonth.month &&
+              t.transaction.date.year == _selectedMonth.year,
+        )
         .fold(0, (sum, t) => sum + t.transaction.amountPaise);
 
     return Column(
@@ -286,17 +353,29 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
                   icon: const Icon(Icons.chevron_left),
                   onPressed: () {
                     setState(() {
-                      _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month - 1);
+                      _selectedMonth = DateTime(
+                        _selectedMonth.year,
+                        _selectedMonth.month - 1,
+                      );
                     });
                   },
                 ),
                 Column(
                   children: [
-                    Text(monthName, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                    Text(
+                      monthName,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 4),
                     AmountText(
                       amount: monthExpensePaise / 100.0,
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.expense),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: _filterType?.name == 'income' ? AppColors.income : AppColors.expense,
+                      ),
                     ),
                   ],
                 ),
@@ -304,7 +383,10 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
                   icon: const Icon(Icons.chevron_right),
                   onPressed: () {
                     setState(() {
-                      _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + 1);
+                      _selectedMonth = DateTime(
+                        _selectedMonth.year,
+                        _selectedMonth.month + 1,
+                      );
                     });
                   },
                 ),
@@ -317,9 +399,25 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
     );
   }
 
-  Widget _buildYearlyView(List<TransactionWithCategory> items, ThemeData theme) {
+  Widget _buildYearlyView(
+    List<TransactionWithCategory> items,
+    ThemeData theme,
+  ) {
     final year = DateTime.now().year;
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
 
     return GridView.builder(
       padding: const EdgeInsets.all(16),
@@ -333,7 +431,12 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
       itemBuilder: (context, index) {
         final monthNum = index + 1;
         final monthTotalPaise = items
-            .where((t) => t.transaction.type == 'expense' && t.transaction.date.month == monthNum && t.transaction.date.year == year)
+            .where(
+              (t) =>
+                  (_filterType == null ? t.transaction.type == 'expense' : true) &&
+                  t.transaction.date.month == monthNum &&
+                  t.transaction.date.year == year,
+            )
             .fold(0, (sum, t) => sum + t.transaction.amountPaise);
 
         return AppCard(
@@ -341,14 +444,22 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> with Si
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(months[index], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(
+                months[index],
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
               const SizedBox(height: 6),
               AmountText(
                 amount: monthTotalPaise / 100.0,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: monthTotalPaise > 0 ? AppColors.expense : Colors.grey,
+                  color: monthTotalPaise > 0 
+                      ? (_filterType?.name == 'income' ? AppColors.income : AppColors.expense) 
+                      : Colors.grey,
                 ),
               ),
             ],

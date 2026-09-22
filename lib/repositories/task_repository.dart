@@ -167,13 +167,15 @@ class TaskRepository {
     String? assignedToUserId,
     DateTime? dueDate,
     String priority = 'Medium',
+    String taskType = 'Short Term',
+    String category = 'General',
   }) async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) {
       throw Exception('You\'re offline or unauthenticated. Reconnect to continue.');
     }
 
-    final response = await _client.from('room_tasks').insert({
+    final payload = <String, dynamic>{
       'room_id': roomId,
       'title': title,
       'description': notes,
@@ -183,7 +185,21 @@ class TaskRepository {
       'is_completed': false,
       'created_by': userId,
       'created_at': DateTime.now().toIso8601String(),
-    }).select().single();
+      'task_type': taskType,
+      'category': category,
+    };
+
+    Map<String, dynamic> response;
+    try {
+      response = await _client.from('room_tasks').insert(payload).select().single();
+    } catch (e) {
+      debugPrint('TaskRepository: DB insert with task_type/category failed, attempting fallback: $e');
+      final fallbackDesc = '[Meta: type=$taskType, cat=$category] ${notes ?? ''}'.trim();
+      payload.remove('task_type');
+      payload.remove('category');
+      payload['description'] = fallbackDesc;
+      response = await _client.from('room_tasks').insert(payload).select().single();
+    }
 
     return RoomTaskModel.fromMap(response);
   }

@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../core/auth/providers/auth_provider.dart';
 import '../../../core/utils/haptic_feedback_util.dart';
-import '../../../core/utils/upi_payment_util.dart';
 import 'change_password_sheet.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -225,65 +224,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            // UPI Details Card
-            Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.primary),
-                title: const Text('My Default UPI VPA ID', style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: FutureBuilder<String?>(
-                  future: UpiPaymentUtil.getSavedUpiId(user.displayName),
-                  builder: (context, snapshot) {
-                    final upiId = snapshot.data;
-                    return Text(
-                      upiId != null && upiId.isNotEmpty ? upiId : 'Not set (e.g. arul@okicici)',
-                      style: TextStyle(
-                        color: upiId != null && upiId.isNotEmpty ? AppColors.primary : Colors.grey,
-                        fontWeight: upiId != null && upiId.isNotEmpty ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    );
-                  },
-                ),
-                trailing: const Icon(Icons.edit_outlined),
-                onTap: () async {
-                  final currentUpi = await UpiPaymentUtil.getSavedUpiId(user.displayName) ?? '';
-                  final controller = TextEditingController(text: currentUpi);
-                  if (!context.mounted) return;
-                  final newUpi = await showDialog<String>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Set Default UPI VPA ID'),
-                      content: TextField(
-                        controller: controller,
-                        decoration: const InputDecoration(
-                          labelText: 'UPI VPA ID',
-                          hintText: 'e.g. arul@okicici, phone@paytm',
-                          prefixIcon: Icon(Icons.payment),
-                        ),
-                      ),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-                          child: const Text('Save UPI ID'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (newUpi != null) {
-                    await UpiPaymentUtil.saveUpiId(user.displayName, newUpi);
-                    setState(() {});
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('✓ Saved UPI ID for settlements!')),
-                      );
-                    }
-                  }
-                },
-              ),
-            ),
-            const SizedBox(height: 24),
+
 
             // Security Options Header
             Align(

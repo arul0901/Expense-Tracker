@@ -1,6 +1,7 @@
 // ignore_for_file: prefer_initializing_formals
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState, AuthException;
+import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState, AuthException, AuthUser, User;
+import '../models/auth_user_model.dart';
 import '../models/auth_state.dart';
 import '../services/auth_service.dart';
 import '../services/biometric_service.dart';
@@ -57,11 +58,29 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
       final isBiometricEnabled = await _tokenStorage.isBiometricEnabled();
 
       if (token != null && user != null) {
+        AuthUser activeUser = user;
+        try {
+          final suUser = Supabase.instance.client.auth.currentUser;
+          if (suUser != null) {
+            final profileData = await Supabase.instance.client
+                .from('profiles')
+                .select('display_name')
+                .eq('id', suUser.id)
+                .maybeSingle();
+            if (profileData != null) {
+              final dbName = profileData['display_name'] as String?;
+              activeUser = activeUser.copyWith(
+                displayName: (dbName != null && dbName.isNotEmpty) ? dbName : activeUser.displayName,
+              );
+            }
+          }
+        } catch (_) {}
+
         if (isBiometricEnabled) {
-          state = AuthState.biometricLocked(user: user, accessToken: token);
+          state = AuthState.biometricLocked(user: activeUser, accessToken: token);
         } else {
           state = AuthState.authenticated(
-            user: user,
+            user: activeUser,
             accessToken: token,
             isBiometricEnabled: isBiometricEnabled,
           );
@@ -215,6 +234,8 @@ class AuthStateNotifier extends StateNotifier<AuthState> {
       return false;
     }
   }
+
+
 
   /// Change Password
   Future<void> changePassword(String currentPassword, String newPassword) async {

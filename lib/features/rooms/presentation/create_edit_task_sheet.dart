@@ -29,9 +29,21 @@ class _CreateEditTaskSheetState extends ConsumerState<CreateEditTaskSheet> {
   DateTime? _selectedDueDate;
   TimeOfDay? _selectedDueTime;
   String _priority = 'Normal';
-  final int _reminderMinutes = 60;
+  String _taskType = 'Short Term'; // 'Short Term' or 'Long Term'
+  String _category = 'General';
 
   final List<String> _priorities = ['Low', 'Normal', 'High', 'Urgent'];
+  final List<String> _taskTypes = ['Short Term', 'Long Term'];
+  final List<String> _categories = [
+    'General',
+    'Work',
+    'Personal',
+    'Shopping',
+    'Finance',
+    'Health',
+    'Chore',
+    'Urgent',
+  ];
 
   @override
   void dispose() {
@@ -91,16 +103,17 @@ class _CreateEditTaskSheetState extends ConsumerState<CreateEditTaskSheet> {
         assignedToUserId: _selectedAssignedUserId,
         dueDate: dueDateTime,
         priority: _priority,
+        taskType: _taskType,
+        category: _category,
       );
 
       if (dueDateTime != null) {
         final notif = ref.read(notificationServiceProvider);
-        final reminderTime = dueDateTime.subtract(Duration(minutes: _reminderMinutes));
         await notif.scheduleReminderNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          title: '🔔 Task Due: ${_titleController.text.trim()}',
-          body: 'Task is due at ${DateFormat('hh:mm a').format(dueDateTime)}',
-          scheduledDate: reminderTime,
+          title: '⏰ Task Due: ${_titleController.text.trim()}',
+          body: 'Category: $_category • Don\'t forget to complete your task!',
+          scheduledDate: dueDateTime,
         );
       }
 
@@ -142,7 +155,10 @@ class _CreateEditTaskSheetState extends ConsumerState<CreateEditTaskSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Add Room Task', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    widget.roomId != null ? 'Add Room Task' : 'Add To-Do Task',
+                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                  ),
                   IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
                 ],
               ),
@@ -166,6 +182,75 @@ class _CreateEditTaskSheetState extends ConsumerState<CreateEditTaskSheet> {
                 ),
               ),
               const SizedBox(height: 16),
+              
+              // Task Duration Selector: Short Term vs Long Term
+              Text('Task Duration / Term', style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Row(
+                children: _taskTypes.map((type) {
+                  final isSelected = type == _taskType;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                type,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: isSelected ? Colors.white : null,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Text(
+                                type == 'Short Term' ? 'Disappears on completion' : 'Appears forever',
+                                style: TextStyle(
+                                  fontSize: 9,
+                                  color: isSelected ? Colors.white.withValues(alpha: 0.85) : Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        selected: isSelected,
+                        selectedColor: type == 'Short Term' ? AppColors.primary : Colors.purple,
+                        onSelected: (selected) {
+                          if (selected) setState(() => _taskType = type);
+                        },
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+
+              // Category Selector
+              Text('Category', style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _categories.map((cat) {
+                    final isSelected = cat == _category;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(cat, style: TextStyle(color: isSelected ? Colors.white : null, fontSize: 12)),
+                        selected: isSelected,
+                        selectedColor: AppColors.income,
+                        onSelected: (selected) {
+                          if (selected) setState(() => _category = cat);
+                        },
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const SizedBox(height: 16),
+
               if (members.isNotEmpty) ...[
                 DropdownButtonFormField<String?>(
                   initialValue: _selectedAssignedUserId,
@@ -223,7 +308,7 @@ class _CreateEditTaskSheetState extends ConsumerState<CreateEditTaskSheet> {
                       Expanded(
                         child: Text(
                           _selectedDueDate == null
-                              ? 'Set Due Date & Time'
+                              ? 'Set Due Date & Time (Notification)'
                               : 'Due: ${DateFormat('dd MMM yyyy').format(_selectedDueDate!)} ${_selectedDueTime != null ? _selectedDueTime!.format(context) : ''}',
                           style: TextStyle(
                             fontWeight: _selectedDueDate == null ? FontWeight.normal : FontWeight.bold,

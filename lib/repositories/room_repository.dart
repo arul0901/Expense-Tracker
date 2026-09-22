@@ -456,6 +456,7 @@ class RoomRepository {
               'details': '$cleanName joined the room workspace',
               'created_at': DateTime.now().toIso8601String(),
             });
+            await _notifyMembersOfNewJoin(room.id, cleanName, currentUser?.id);
           } catch (_) {}
 
           return true;
@@ -497,6 +498,7 @@ class RoomRepository {
             'details': '$cleanName joined the room workspace',
             'created_at': DateTime.now().toIso8601String(),
           });
+          await _notifyMembersOfNewJoin(room.id, cleanName, currentUser?.id);
         } catch (_) {}
 
         return true;
@@ -628,29 +630,26 @@ class RoomRepository {
 
     final expenseDate = date ?? DateTime.now();
 
-    // Fetch members to map member ids & names accurately to user_ids
-    final membersRows = await _client
-        .from('room_members')
-        .select()
-        .eq('room_id', roomId)
-        .order('joined_at', ascending: true);
+    // Fetch deduplicated active room members matching UI order
+    final activeMembers = await getRoomMembers(roomId);
 
-    final membersMap = <int, Map<String, dynamic>>{};
-    int idx = 1;
+    final membersMap = <int, RoomMemberModel>{};
     String? payerUserId;
 
-    for (final m in (membersRows as List)) {
-      final map = Map<String, dynamic>.from(m as Map);
-      membersMap[idx] = map;
-      final mName = (map['member_name'] ?? map['name'])?.toString().trim();
-      final uId = map['user_id']?.toString();
-      if (mName != null && mName.toLowerCase() == paidByMemberName.trim().toLowerCase()) {
-        payerUserId = uId;
+    for (int i = 0; i < activeMembers.length; i++) {
+      final m = activeMembers[i];
+      membersMap[i + 1] = m;
+      if (m.name.trim().toLowerCase() == paidByMemberName.trim().toLowerCase()) {
+        payerUserId = m.userId;
       }
-      idx++;
     }
 
-    final expRow = await _client.from('room_expenses').insert({
+    String? validCatId = categoryId;
+    if (validCatId != null && !RegExp(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$').hasMatch(validCatId)) {
+      validCatId = null;
+    }
+
+    final payload = <String, dynamic>{
       'room_id': roomId,
       'paid_by_user_id': payerUserId,
       'paid_by_member_name': paidByMemberName,
@@ -658,19 +657,55 @@ class RoomRepository {
       'description': description,
       'date': expenseDate.toIso8601String(),
       'split_type': splitType,
-      'category_id': categoryId,
+      'category_id': validCatId,
       'notes': notes,
-      'receipt_url': receiptUrl,
       'linked_transaction_id': linkedTransactionId,
       'created_at': DateTime.now().toIso8601String(),
-    }).select().single();
+    };
+    if (receiptUrl != null && receiptUrl.isNotEmpty) {
+      payload['receipt_url'] = receiptUrl;
+    }
+
+    Map<String, dynamic> expRow;
+    try {
+      expRow = await _client.from('room_expenses').insert(payload).select().single();
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST204' || e.message.contains('receipt_url') || e.code == '23503' || e.message.contains('category_id') || e.message.contains('categories')) {
+        payload.remove('receipt_url');
+        if (e.code == '23503' || e.message.contains('category_id') || e.message.contains('categories')) {
+          payload['category_id'] = null;
+        }
+        expRow = await _client.from('room_expenses').insert(payload).select().single();
+      } else {
+        rethrow;
+      }
+    }
 
     final expId = expRow['id'].toString();
 
+    if (payerUserId == currentUser.id) {
+      try {
+        final txPayload = {
+          'user_id': currentUser.id,
+          'amount_paise': amountPaise,
+          'description': description,
+          'type': 'expense',
+          'date': expenseDate.toIso8601String(),
+          'category_id': validCatId,
+          'notes': notes,
+        };
+        final txRow = await _client.from('transactions').insert(txPayload).select().single();
+        final txId = txRow['id'].toString();
+        await _client.from('room_expenses').update({'linked_transaction_id': txId}).eq('id', expId);
+      } catch (e) {
+        debugPrint('RoomRepository: Failed to create linked personal transaction: $e');
+      }
+    }
+
     for (final split in splits) {
-      final memberData = membersMap[split.memberId];
-      final memberName = (memberData?['member_name'] ?? memberData?['name'])?.toString() ?? 'Member';
-      final memberUserId = memberData?['user_id']?.toString();
+      final member = membersMap[split.memberId];
+      final memberName = member?.name ?? 'Member';
+      final memberUserId = member?.userId;
 
       await _client.from('expense_splits').insert({
         'room_expense_id': expId,
@@ -703,6 +738,7 @@ class RoomRepository {
         title: '💸 New Shared Expense in $roomName',
         body: '$paidByMemberName added "$description" (₹$rupees). Split recorded for ${splits.length} members.',
       );
+      await _notifyMembersOfNewExpense(roomId, paidByMemberName, description, rupees, currentUser.id);
     } catch (_) {}
   }
 
@@ -780,6 +816,31 @@ class RoomRepository {
     }
 
     await _client.from('expense_splits').insert(newSplits);
+  }
+
+  /// Adds a new member to all past expenses paid by the specified member.
+  Future<void> addMemberToPastExpenses({
+    required String roomId,
+    required String payerMemberName,
+    required String newMemberName,
+  }) async {
+    final expenses = await getRoomExpenses(roomId);
+    final payerNameClean = payerMemberName.trim().toLowerCase();
+    
+    for (final expInfo in expenses) {
+      if (expInfo.payer.name.trim().toLowerCase() == payerNameClean) {
+        final splitNames = expInfo.splits.map((s) => s.memberName).toList();
+        final hasNewMember = splitNames.any((name) => name.trim().toLowerCase() == newMemberName.trim().toLowerCase());
+        
+        if (!hasNewMember) {
+          splitNames.add(newMemberName);
+          await updateRoomExpenseSplits(
+            expenseId: expInfo.expense.id,
+            selectedMemberNames: splitNames,
+          );
+        }
+      }
+    }
   }
 
   Future<List<ExpenseWithPayerAndSplits>> getRoomExpenses(String roomId) async {
@@ -951,7 +1012,7 @@ class RoomRepository {
       }
 
       for (final s in settlements) {
-        if (s.undoneAt == null) {
+        if (s.undoneAt == null && s.isSettled) {
           final fromName = s.fromMemberName.trim().toLowerCase();
           final toName = s.toMemberName.trim().toLowerCase();
 
@@ -1024,11 +1085,34 @@ class RoomRepository {
     }
   }
 
+  Future<String?> getUpiIdByUserId(String userId) async {
+    try {
+      final res = await _client.from('profiles').select('upi_id').eq('id', userId).maybeSingle();
+      return res?['upi_id'] as String?;
+    } catch (e) {
+      debugPrint('Error fetching UPI ID for user $userId: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> getUserProfileByUserId(String userId) async {
+    try {
+      final res = await _client.from('profiles').select().eq('id', userId).maybeSingle();
+      return res;
+    } catch (e) {
+      debugPrint('Error fetching profile for user $userId: $e');
+      return null;
+    }
+  }
+
   Future<void> recordSettlement({
     required String roomId,
     required String fromMemberName,
     required String toMemberName,
+    String? fromUserId,
+    String? toUserId,
     required int amountPaise,
+    String status = 'settled',
     String? note,
   }) async {
     final currentUser = _client.auth.currentUser;
@@ -1038,14 +1122,18 @@ class RoomRepository {
 
     final now = DateTime.now();
     final undoExpiresAt = now.add(const Duration(minutes: 30));
+    final String payerId = fromUserId ?? currentUser.id;
 
     await _client.from('settlements').insert({
       'room_id': roomId,
-      'from_user_id': currentUser.id,
+      'from_user_id': payerId,
+      'to_user_id': toUserId,
       'from_member_name': fromMemberName,
       'to_member_name': toMemberName,
       'amount_paise': amountPaise,
-      'settled_at': now.toIso8601String(),
+      'status': status,
+      'settled_at': status == 'settled' ? now.toIso8601String() : null,
+      'confirmed_by_user_id': status == 'settled' ? currentUser.id : null,
       'note': note,
       'undo_expires_at': undoExpiresAt.toIso8601String(),
     });
@@ -1055,9 +1143,57 @@ class RoomRepository {
       'room_id': roomId,
       'user_id': currentUser.id,
       'member_name': fromMemberName,
-      'action_type': 'settlement_recorded',
-      'details': '$fromMemberName paid ₹$rupees to $toMemberName (30m undo window active)',
+      'action_type': status == 'settled' ? 'settlement_recorded' : 'settlement_payment_initiated',
+      'details': status == 'settled'
+          ? '$fromMemberName paid ₹$rupees to $toMemberName (Confirmed Settled)'
+          : '$fromMemberName initiated payment of ₹$rupees to $toMemberName via UPI',
       'created_at': now.toIso8601String(),
+    });
+  }
+
+  /// Mark an existing settlement as settled (Receiver action)
+  Future<void> markSettlementAsSettled({
+    required String settlementId,
+    required String roomId,
+  }) async {
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('You\'re offline or unauthenticated.');
+    }
+
+    final now = DateTime.now();
+
+    await _client.from('settlements').update({
+      'status': 'settled',
+      'settled_at': now.toIso8601String(),
+      'confirmed_by_user_id': currentUser.id,
+    }).eq('id', settlementId);
+
+    await _client.from('room_activities').insert({
+      'room_id': roomId,
+      'user_id': currentUser.id,
+      'member_name': 'Receiver',
+      'action_type': 'settlement_confirmed',
+      'details': 'Settlement marked as settled by receiver',
+      'created_at': now.toIso8601String(),
+    });
+  }
+
+  Future<void> addRoomActivity({
+    required String roomId,
+    required String actionType,
+    required String details,
+  }) async {
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) return;
+
+    await _client.from('room_activities').insert({
+      'room_id': roomId,
+      'user_id': currentUser.id,
+      'member_name': currentUser.userMetadata?['display_name'] ?? 'Member',
+      'action_type': actionType,
+      'details': details,
+      'created_at': DateTime.now().toIso8601String(),
     });
   }
 
@@ -1117,6 +1253,64 @@ class RoomRepository {
             .map((rows) => rows.map((r) => RoomActivityModel.fromMap(r)).toList());
       },
     );
+  }
+
+  Future<void> _notifyMembersOfNewJoin(String roomId, String joinerName, String? joinerUserId) async {
+    try {
+      final members = await getRoomMembers(roomId);
+      final roomRow = await _client.from('rooms').select('name').eq('id', roomId).maybeSingle();
+      final roomName = roomRow?['name'] ?? 'Shared Room';
+
+      final notifications = <Map<String, dynamic>>[];
+      for (final m in members) {
+        if (m.userId != null && m.userId != joinerUserId) {
+          notifications.add({
+            'recipient_user_id': m.userId,
+            'actor_user_id': joinerUserId,
+            'room_id': roomId,
+            'type': 'member_joined',
+            'title': 'New Member in $roomName',
+            'message': '$joinerName has joined the room.',
+            'entity_type': 'room',
+            'entity_id': roomId,
+            'is_read': false,
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        }
+      }
+      if (notifications.isNotEmpty) {
+        await _client.from('notifications').insert(notifications);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _notifyMembersOfNewExpense(String roomId, String payerName, String desc, String rupees, String? actorUserId) async {
+    try {
+      final members = await getRoomMembers(roomId);
+      final roomRow = await _client.from('rooms').select('name').eq('id', roomId).maybeSingle();
+      final roomName = roomRow?['name'] ?? 'Shared Room';
+
+      final notifications = <Map<String, dynamic>>[];
+      for (final m in members) {
+        if (m.userId != null) {
+          notifications.add({
+            'recipient_user_id': m.userId,
+            'actor_user_id': actorUserId,
+            'room_id': roomId,
+            'type': 'expense_added',
+            'title': '💸 New Shared Expense in $roomName',
+            'message': '$payerName added "$desc" (₹$rupees).',
+            'entity_type': 'expense',
+            'entity_id': roomId,
+            'is_read': false,
+            'created_at': DateTime.now().toIso8601String(),
+          });
+        }
+      }
+      if (notifications.isNotEmpty) {
+        await _client.from('notifications').insert(notifications);
+      }
+    } catch (_) {}
   }
 
   /// Fetch room members with deduplication

@@ -13,11 +13,16 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- ---------------------------------------------------------------------
 ALTER TABLE public.room_members ADD COLUMN IF NOT EXISTS member_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.room_expenses ADD COLUMN IF NOT EXISTS paid_by_member_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE public.room_expenses ADD COLUMN IF NOT EXISTS receipt_url TEXT;
 ALTER TABLE public.room_activities ADD COLUMN IF NOT EXISTS member_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS member_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.settlements ADD COLUMN IF NOT EXISTS from_member_name TEXT NOT NULL DEFAULT '';
 ALTER TABLE public.settlements ADD COLUMN IF NOT EXISTS to_member_name TEXT NOT NULL DEFAULT '';
-
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS upi_id TEXT;
+ALTER TABLE public.settlements ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE public.settlements ADD COLUMN IF NOT EXISTS confirmed_by_user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.settlements ADD COLUMN IF NOT EXISTS undo_expires_at TIMESTAMPTZ;
+ALTER TABLE public.settlements ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 -- ---------------------------------------------------------------------
 -- 1. PROFILES
 -- ---------------------------------------------------------------------
@@ -25,6 +30,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email TEXT,
     display_name TEXT NOT NULL DEFAULT '',
+    upi_id TEXT,
     avatar_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -256,8 +262,12 @@ CREATE TABLE IF NOT EXISTS public.settlements (
     from_member_name TEXT NOT NULL DEFAULT '',
     to_member_name TEXT NOT NULL DEFAULT '',
     amount_paise BIGINT NOT NULL CHECK (amount_paise > 0),
-    settled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    note TEXT
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'payment_initiated', 'payment_completed', 'settled')),
+    settled_at TIMESTAMPTZ,
+    confirmed_by_user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    note TEXT,
+    undo_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ---------------------------------------------------------------------
@@ -314,8 +324,37 @@ CREATE TABLE IF NOT EXISTS public.user_devices (
     CONSTRAINT unique_user_fcm UNIQUE (user_id, fcm_token)
 );
 
+-- ---------------------------------------------------------------------
+-- 18. APP FEEDBACK & COMMUNITY IDEAS
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.app_feedback (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    type TEXT NOT NULL DEFAULT 'Feature Request',
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    impact TEXT NOT NULL DEFAULT '💡 Great Idea',
+    status TEXT NOT NULL DEFAULT 'Under Review',
+    upvotes INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.app_feedback ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow insertion of app feedback" ON public.app_feedback;
+CREATE POLICY "Allow insertion of app feedback"
+ON public.app_feedback FOR INSERT
+TO public
+WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow reading of app feedback" ON public.app_feedback;
+CREATE POLICY "Allow reading of app feedback"
+ON public.app_feedback FOR SELECT
+TO public
+USING (true);
+
 -- =====================================================================
--- SECURITY FUNCTIONS
+-- 2. SECURITY HELPER FUNCTIONS
 -- =====================================================================
 
 CREATE OR REPLACE FUNCTION public.is_room_member(p_room_id UUID, p_user_id UUID)
@@ -628,19 +667,56 @@ CREATE POLICY "Members can create settlements"
 ON public.settlements FOR INSERT TO authenticated
 WITH CHECK (
     public.is_room_member(room_id, auth.uid())
-    AND from_user_id = auth.uid()
+    AND (from_user_id = auth.uid() OR to_user_id = auth.uid())
 );
 
+DROP POLICY IF EXISTS "Members can update settlements" ON public.settlements;
 DROP POLICY IF EXISTS "Members can update own settlements" ON public.settlements;
-CREATE POLICY "Members can update own settlements"
+CREATE POLICY "Members can update settlements"
 ON public.settlements FOR UPDATE TO authenticated
-USING (from_user_id = auth.uid())
-WITH CHECK (from_user_id = auth.uid());
+USING (
+    public.is_room_member(room_id, auth.uid())
+    AND (
+        to_user_id = auth.uid()
+        OR (from_user_id = auth.uid() AND status != 'settled')
+    )
+)
+WITH CHECK (
+    public.is_room_member(room_id, auth.uid())
+    AND (
+        to_user_id = auth.uid()
+        OR (from_user_id = auth.uid() AND status != 'settled')
+    )
+);
 
 DROP POLICY IF EXISTS "Members can delete own settlements" ON public.settlements;
 CREATE POLICY "Members can delete own settlements"
 ON public.settlements FOR DELETE TO authenticated
-USING (from_user_id = auth.uid());
+USING (from_user_id = auth.uid() OR to_user_id = auth.uid());
+
+-- Trigger to enforce backend authorization for marking a settlement as settled
+CREATE OR REPLACE FUNCTION public.enforce_settlement_receiver_confirmation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NEW.status = 'settled' AND OLD.status IS DISTINCT FROM 'settled' THEN
+        IF auth.uid() IS NULL OR auth.uid() != OLD.to_user_id THEN
+            RAISE EXCEPTION 'Unauthorized: Only the receiver of the settlement can mark it as settled.';
+        END IF;
+        NEW.settled_at = NOW();
+        NEW.confirmed_by_user_id = auth.uid();
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_enforce_settlement_receiver ON public.settlements;
+CREATE TRIGGER trigger_enforce_settlement_receiver
+BEFORE UPDATE ON public.settlements
+FOR EACH ROW EXECUTE FUNCTION public.enforce_settlement_receiver_confirmation();
 
 -- Tasks
 DROP POLICY IF EXISTS "Members can view room tasks" ON public.room_tasks;
@@ -1267,12 +1343,14 @@ VALUES ('receipts', 'receipts', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Policy: Allow authenticated users to upload receipts
+DROP POLICY IF EXISTS "Allow authenticated users to upload receipts" ON storage.objects;
 CREATE POLICY "Allow authenticated users to upload receipts"
 ON storage.objects FOR INSERT
 TO authenticated
 WITH CHECK (bucket_id = 'receipts');
 
 -- Policy: Allow public read access to bill receipts
+DROP POLICY IF EXISTS "Allow public read access to receipts" ON storage.objects;
 CREATE POLICY "Allow public read access to receipts"
 ON storage.objects FOR SELECT
 TO public
@@ -1286,3 +1364,192 @@ NOTIFY pgrst, 'reload schema';
 -- =====================================================================
 -- END
 -- =====================================================================
+-- =====================================================================
+-- GLOBAL NOTIFICATIONS SCHEMA & TRIGGERS
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- 1. NOTIFICATIONS TABLE
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    recipient_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    actor_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    room_id UUID REFERENCES public.rooms(id) ON DELETE CASCADE,
+    event_id UUID REFERENCES public.events(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id UUID,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- RLS Policies
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view their own notifications" ON public.notifications;
+CREATE POLICY "Users can view their own notifications"
+ON public.notifications FOR SELECT
+TO authenticated
+USING (auth.uid() = recipient_user_id);
+
+DROP POLICY IF EXISTS "Users can update their own notifications (mark as read)" ON public.notifications;
+CREATE POLICY "Users can update their own notifications (mark as read)"
+ON public.notifications FOR UPDATE
+TO authenticated
+USING (auth.uid() = recipient_user_id)
+WITH CHECK (auth.uid() = recipient_user_id);
+
+-- ---------------------------------------------------------------------
+-- 2. TRIGGER FUNCTION: ROOM EXPENSES
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.notify_room_expense_added()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_room_name TEXT;
+    v_member RECORD;
+    v_rupees NUMERIC;
+BEGIN
+    SELECT name INTO v_room_name FROM public.rooms WHERE id = NEW.room_id;
+    v_rupees := NEW.amount_paise / 100.0;
+
+    FOR v_member IN 
+        SELECT user_id FROM public.room_members 
+        WHERE room_id = NEW.room_id AND is_active = TRUE AND user_id != NEW.paid_by_user_id
+    LOOP
+        INSERT INTO public.notifications (
+            recipient_user_id, actor_user_id, room_id, type, title, message, entity_type, entity_id
+        ) VALUES (
+            v_member.user_id,
+            NEW.paid_by_user_id,
+            NEW.room_id,
+            'room_expense_added',
+            'New Room Expense',
+            NEW.paid_by_member_name || ' added a room expense of ₹' || v_rupees || ' for ' || NEW.description || ' in ' || v_room_name,
+            'room_expense',
+            NEW.id
+        );
+    END LOOP;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_room_expense_notification ON public.room_expenses;
+CREATE TRIGGER trigger_room_expense_notification
+AFTER INSERT ON public.room_expenses
+FOR EACH ROW EXECUTE FUNCTION public.notify_room_expense_added();
+
+-- ---------------------------------------------------------------------
+-- 3. TRIGGER FUNCTION: EXPENSE SPLITS (When someone splits an expense)
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.notify_expense_split_added()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_expense_description TEXT;
+    v_room_id UUID;
+    v_room_name TEXT;
+    v_paid_by_user_id UUID;
+    v_paid_by_name TEXT;
+    v_rupees NUMERIC;
+BEGIN
+    -- Get expense details
+    SELECT description, room_id, paid_by_user_id, paid_by_member_name 
+    INTO v_expense_description, v_room_id, v_paid_by_user_id, v_paid_by_name
+    FROM public.room_expenses WHERE id = NEW.room_expense_id;
+
+    SELECT name INTO v_room_name FROM public.rooms WHERE id = v_room_id;
+    v_rupees := NEW.amount_paise / 100.0;
+
+    -- Only notify the person who owes the split (if it's not the person who paid)
+    IF NEW.user_id IS NOT NULL AND NEW.user_id != v_paid_by_user_id THEN
+        INSERT INTO public.notifications (
+            recipient_user_id, actor_user_id, room_id, type, title, message, entity_type, entity_id
+        ) VALUES (
+            NEW.user_id,
+            v_paid_by_user_id,
+            v_room_id,
+            'expense_split_added',
+            'New Split Added',
+            v_paid_by_name || ' added a split of ₹' || v_rupees || ' for ' || v_expense_description || ' in ' || v_room_name,
+            'expense_split',
+            NEW.id
+        );
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_expense_split_notification ON public.expense_splits;
+CREATE TRIGGER trigger_expense_split_notification
+AFTER INSERT ON public.expense_splits
+FOR EACH ROW EXECUTE FUNCTION public.notify_expense_split_added();
+
+-- ---------------------------------------------------------------------
+-- 4. TRIGGER FUNCTION: PERSONAL TRANSACTIONS WITH EVENTS
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.notify_transaction_event_added()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_room_id UUID;
+    v_room_name TEXT;
+    v_event_name TEXT;
+    v_member RECORD;
+    v_rupees NUMERIC;
+    v_actor_name TEXT;
+BEGIN
+    -- Only proceed if it's an expense linked to an event
+    IF NEW.type = 'expense' AND NEW.event_id IS NOT NULL THEN
+        -- Get Event details
+        SELECT room_id, name INTO v_room_id, v_event_name FROM public.events WHERE id = NEW.event_id;
+        
+        -- Get Room details
+        IF v_room_id IS NOT NULL THEN
+            SELECT name INTO v_room_name FROM public.rooms WHERE id = v_room_id;
+            SELECT display_name INTO v_actor_name FROM public.profiles WHERE id = NEW.user_id;
+            v_rupees := NEW.amount_paise / 100.0;
+
+            FOR v_member IN 
+                SELECT user_id FROM public.room_members 
+                WHERE room_id = v_room_id AND is_active = TRUE AND user_id != NEW.user_id
+            LOOP
+                INSERT INTO public.notifications (
+                    recipient_user_id, actor_user_id, room_id, event_id, type, title, message, entity_type, entity_id
+                ) VALUES (
+                    v_member.user_id,
+                    NEW.user_id,
+                    v_room_id,
+                    NEW.event_id,
+                    'personal_expense_event',
+                    'Expense Added to Event',
+                    v_actor_name || ' added a personal expense of ₹' || v_rupees || ' to ' || v_event_name || ' in ' || v_room_name,
+                    'transaction',
+                    NEW.id
+                );
+            END LOOP;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_transaction_event_notification ON public.transactions;
+CREATE TRIGGER trigger_transaction_event_notification
+AFTER INSERT ON public.transactions
+FOR EACH ROW EXECUTE FUNCTION public.notify_transaction_event_added();

@@ -16,6 +16,7 @@ import '../repositories/room_repository.dart';
 import '../repositories/search_repository.dart';
 import '../repositories/task_repository.dart';
 import '../repositories/transaction_repository.dart';
+import '../services/ai_assistant_service.dart';
 import '../services/notification_service.dart';
 
 // Supabase Client Provider
@@ -32,6 +33,10 @@ final activeUserIdProvider = Provider<String?>((ref) {
 // Services
 final notificationServiceProvider = Provider<NotificationService>((ref) {
   return NotificationService();
+});
+
+final aiAssistantServiceProvider = Provider<AiAssistantService>((ref) {
+  return AiAssistantService(ref.watch(supabaseClientProvider));
 });
 
 // Repositories
